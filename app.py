@@ -20,14 +20,52 @@ st.set_page_config(
 )
 
 # --------------------------------------------------
-# Auto Refresh (10 min)
+# Session State (Navigation)
+# --------------------------------------------------
+if "page" not in st.session_state:
+    st.session_state.page = "welcome"
+
+# --------------------------------------------------
+# WELCOME PAGE
+# --------------------------------------------------
+if st.session_state.page == "welcome":
+    st.markdown(
+        """
+        <div style="text-align:center;padding-top:60px;">
+            <h1>🚀 AI Quant Financial Dashboard</h1>
+            <h3>Advanced Stock Analysis • Forecasting • Risk Metrics</h3>
+            <br>
+            <p style="font-size:18px;">
+                📈 Technical Indicators<br>
+                🔮 AI Forecasting (Prophet)<br>
+                📊 Multi-Ticker Comparison<br>
+                ⚠️ Anomaly Detection<br>
+            </p>
+            <br>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        if st.button("▶️ Enter Dashboard", use_container_width=True):
+            st.session_state.page = "dashboard"
+            st.rerun()
+
+    st.stop()
+
+# --------------------------------------------------
+# AUTO REFRESH (10 min)
 # --------------------------------------------------
 if "last_refresh" not in st.session_state:
     st.session_state.last_refresh = datetime.now()
 
 if datetime.now() - st.session_state.last_refresh > timedelta(minutes=10):
     st.session_state.clear()
+    st.session_state.page = "welcome"
     st.session_state.last_refresh = datetime.now()
+    st.rerun()
 
 # --------------------------------------------------
 # Cached Data
@@ -57,50 +95,34 @@ def load_fundamentals(ticker):
     }
 
 # --------------------------------------------------
-# Indicators (UPGRADED)
+# Indicators
 # --------------------------------------------------
 def indicators(df):
     df = df.copy()
 
-    # Moving Averages
     df["SMA20"] = df["Close"].rolling(20).mean()
     df["SMA50"] = df["Close"].rolling(50).mean()
     df["EMA20"] = df["Close"].ewm(span=20).mean()
 
-    # Bollinger Bands
     std = df["Close"].rolling(20).std()
     df["BB_Upper"] = df["SMA20"] + 2 * std
     df["BB_Lower"] = df["SMA20"] - 2 * std
 
-    # RSI
     delta = df["Close"].diff()
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
     rs = gain.rolling(14).mean() / loss.rolling(14).mean()
     df["RSI"] = 100 - (100 / (1 + rs))
 
-    # MACD
     ema12 = df["Close"].ewm(span=12).mean()
     ema26 = df["Close"].ewm(span=26).mean()
     df["MACD"] = ema12 - ema26
     df["MACD_Signal"] = df["MACD"].ewm(span=9).mean()
 
-    # ATR
-    tr = pd.concat([
-        df["High"] - df["Low"],
-        (df["High"] - df["Close"].shift()).abs(),
-        (df["Low"] - df["Close"].shift()).abs()
-    ], axis=1).max(axis=1)
-    df["ATR"] = tr.rolling(14).mean()
-
-    # VWAP
     df["VWAP"] = (
         (df["Volume"] * (df["High"] + df["Low"] + df["Close"]) / 3)
         .cumsum() / df["Volume"].cumsum()
     )
-
-    # Volume MA
-    df["VOL_MA20"] = df["Volume"].rolling(20).mean()
 
     return df
 
@@ -137,7 +159,7 @@ def forecast_price(df, days):
     return model.predict(future)
 
 # --------------------------------------------------
-# Sidebar
+# SIDEBAR
 # --------------------------------------------------
 st.sidebar.title("⚙️ Controls")
 
@@ -155,7 +177,7 @@ price_indicators = st.sidebar.multiselect(
 )
 
 # --------------------------------------------------
-# Tabs
+# DASHBOARD TABS
 # --------------------------------------------------
 tabs = st.tabs([
     "📈 Price + Indicators",
@@ -165,54 +187,25 @@ tabs = st.tabs([
     "📥 Export"
 ])
 
-# --------------------------------------------------
-# Price + Indicators
-# --------------------------------------------------
+# ---------------- Price ----------------
 with tabs[0]:
     fig = go.Figure()
-
     for t in tickers:
         df = load_stock_data(t.strip(), period)
         if df is None:
             continue
-
         df = indicators(df)
         df = detect_anomalies(df)
 
-        fig.add_trace(go.Scatter(
-            x=df.index,
-            y=df["Close"],
-            name=f"{t.strip()} Close",
-            line=dict(width=2)
-        ))
+        fig.add_trace(go.Scatter(x=df.index, y=df["Close"], name=f"{t} Close"))
 
         for ind in price_indicators:
-            fig.add_trace(go.Scatter(
-                x=df.index,
-                y=df[ind],
-                name=f"{t.strip()} {ind}",
-                line=dict(dash="dot")
-            ))
+            fig.add_trace(go.Scatter(x=df.index, y=df[ind], name=f"{t} {ind}", line=dict(dash="dot")))
 
-        anomalies = df[df["Anomaly"] == -1]
-        fig.add_trace(go.Scatter(
-            x=anomalies.index,
-            y=anomalies["Close"],
-            mode="markers",
-            marker=dict(color="red", size=6),
-            name=f"{t.strip()} Anomaly"
-        ))
-
-    fig.update_layout(
-        height=520,
-        title="Price with Advanced Technical Indicators",
-        xaxis_rangeslider_visible=False
-    )
+    fig.update_layout(height=520, title="Price with Indicators", xaxis_rangeslider_visible=False)
     st.plotly_chart(fig, width="stretch")
 
-# --------------------------------------------------
-# RSI & MACD
-# --------------------------------------------------
+# ---------------- RSI & MACD ----------------
 with tabs[1]:
     for t in tickers:
         df = load_stock_data(t.strip(), period)
@@ -220,24 +213,13 @@ with tabs[1]:
             continue
         df = indicators(df)
 
-        st.subheader(f"{t.strip()} RSI")
-        rsi_fig = go.Figure()
-        rsi_fig.add_trace(go.Scatter(x=df.index, y=df["RSI"], name="RSI"))
-        rsi_fig.add_hline(y=70, line_dash="dash")
-        rsi_fig.add_hline(y=30, line_dash="dash")
-        rsi_fig.update_layout(height=260)
-        st.plotly_chart(rsi_fig, width="stretch")
+        st.subheader(f"{t} RSI")
+        st.line_chart(df["RSI"])
 
-        st.subheader(f"{t.strip()} MACD")
-        macd_fig = go.Figure()
-        macd_fig.add_trace(go.Scatter(x=df.index, y=df["MACD"], name="MACD"))
-        macd_fig.add_trace(go.Scatter(x=df.index, y=df["MACD_Signal"], name="Signal"))
-        macd_fig.update_layout(height=260)
-        st.plotly_chart(macd_fig, width="stretch")
+        st.subheader(f"{t} MACD")
+        st.line_chart(df[["MACD", "MACD_Signal"]])
 
-# --------------------------------------------------
-# Forecast
-# --------------------------------------------------
+# ---------------- Forecast ----------------
 with tabs[2]:
     for t in tickers:
         df = load_stock_data(t.strip(), period)
@@ -247,42 +229,34 @@ with tabs[2]:
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=df.index, y=df["Close"], name="History"))
         fig.add_trace(go.Scatter(x=fc["ds"], y=fc["yhat"], name="Forecast"))
-        fig.update_layout(title=f"{t.strip()} Price Forecast", height=420)
         st.plotly_chart(fig, width="stretch")
 
-# --------------------------------------------------
-# Fundamentals (Arrow-safe)
-# --------------------------------------------------
+# ---------------- Fundamentals ----------------
 with tabs[3]:
     for t in tickers:
-        fundamentals = load_fundamentals(t.strip())
         fdf = (
-            pd.DataFrame(fundamentals, index=["Value"])
+            pd.DataFrame(load_fundamentals(t.strip()), index=["Value"])
             .T.reset_index()
             .rename(columns={"index": "Metric"})
         )
         fdf["Value"] = fdf["Value"].astype(str)
-        st.subheader(f"{t.strip()} Fundamentals")
+        st.subheader(f"{t} Fundamentals")
         st.dataframe(fdf, width="stretch")
 
-# --------------------------------------------------
-# Export
-# --------------------------------------------------
+# ---------------- Export ----------------
 with tabs[4]:
-    export_frames = []
+    frames = []
     for t in tickers:
         df = load_stock_data(t.strip(), period)
         if df is not None:
-            df["Ticker"] = t.strip()
-            export_frames.append(df)
+            df["Ticker"] = t
+            frames.append(df)
 
-    if export_frames:
-        export_df = pd.concat(export_frames)
+    if frames:
+        export_df = pd.concat(frames)
         st.download_button(
-            "⬇️ Download All Data (CSV)",
+            "⬇️ Download CSV",
             export_df.to_csv().encode("utf-8"),
             file_name=f"market_data_{datetime.now().date()}.csv",
             mime="text/csv"
         )
-
-
